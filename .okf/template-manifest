@@ -1,0 +1,77 @@
+# okf-template-sync manifest (D-12): the contract of which files this template OWNS.
+#
+# `okf-template-sync` overwrites exactly the files listed here, from a later template tag, in one reviewable pull
+# request; a file listed in this repository's previous manifest and dropped from a later one is DELETED in that pull
+# request. Removing a line is therefore not a cleanup: it deletes the file in every repository on its next sync.
+#
+# One repository-relative path per line (letters, digits, dot, underscore, dash and slash; no leading dash, no dot or
+# dot-dot component); `#` starts a comment line. The single special line below, `merge-codeowners`, merges CODEOWNERS:
+# every existing line is kept and a template rule the repository lacks is appended with the owners of its own
+# `/.github/` rule.
+#
+# KB-owned files are NEVER listed and the sync refuses a manifest that names one (the deny-list is in template-sync.sh,
+# not here): the knowledge bundle, `.okf/maintainers`, `.okf/publish.toml`, `.okf/profile.json`, `.okf/agent.toml`,
+# `.okf/template-version`, `README.md`, the CODEOWNERS owner lines, and the rules skill's run-time profile render.
+.claude/skills/okf-kb-rules/SKILL.md
+.claude/skills/okf-kb-rules/references/findings.md
+.claude/skills/okf-kb-rules/references/recipes.md
+.claude/skills/okf-kb-rules/references/rules.md
+.gitattributes
+.github/ISSUE_TEMPLATE/config.yml
+.github/ISSUE_TEMPLATE/missing-knowledge.yml
+.github/ISSUE_TEMPLATE/update.yml
+.github/ISSUE_TEMPLATE/wrong-answer.yml
+.github/actions/okf-check/action.yml
+.github/actions/okf-check/diff-scope.sh
+.github/actions/okf-check/run-check.sh
+.github/actions/okf-check/skill-drift.sh
+.github/actions/okf-engine/action.yml
+.github/actions/okf-engine/lock.sh
+.github/actions/okf-engine/seed-engine.sh
+.github/actions/okf-engine/verify-engine.sh
+.github/okf/CI.md
+.github/okf/ISSUE-CONTRACT.md
+.github/okf/agent/caps-prompt.md
+.github/okf/agent/config.py
+.github/okf/agent/contain.sh
+.github/okf/agent/gate.sh
+.github/okf/agent/probe-prompt.md
+.github/okf/agent/prompt.md
+.github/okf/agent/propose.sh
+.github/okf/agent/provenance.py
+.github/okf/agent/session-check.py
+.github/okf/agent/snapshot.py
+.github/okf/agent/workspace.sh
+.github/okf/candidate-lock.sh
+.github/okf/drift-issue.sh
+.github/okf/issue-contract.json
+.github/okf/maintenance-guard.sh
+.github/okf/post-comment.mjs
+.github/okf/secret-scan.sh
+.github/okf/seed-and-recheck.sh
+.github/okf/template-sync.sh
+.github/okf/triage.py
+.github/workflows/okf-agent-probe.yml
+.github/workflows/okf-agent.yml
+.github/workflows/okf-bundle-view.yml
+.github/workflows/okf-check.yml
+.github/workflows/okf-doctor.yml
+.github/workflows/okf-pages.yml
+.github/workflows/okf-preview-comment.yml
+.github/workflows/okf-publish.yml
+.github/workflows/okf-secret-scan.yml
+.github/workflows/okf-seed-engine.yml
+.github/workflows/okf-template-sync.yml
+.github/workflows/okf-triage.yml
+.okf/engine.lock
+.okf/gitleaks.lock
+.okf/gitleaks.toml
+.okf/template-manifest
+scripts/okf-bootstrap.sh
+scripts/okf-doctor.sh
+scripts/okf-settings/codeowners.py
+scripts/okf-settings/common.sh
+scripts/okf-settings/environments.tsv
+scripts/okf-settings/labels.tsv
+scripts/okf-settings/ruleset.json
+merge-codeowners .github/CODEOWNERS

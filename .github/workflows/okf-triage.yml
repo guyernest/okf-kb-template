@@ -1,0 +1,55 @@
+# Phase 214 (KTPL-02, D-16): triage an issue report against the issue-form contract.
+#
+# A business user reports a wrong answer, missing knowledge or an update through one of the three
+# issue forms (.github/ISSUE_TEMPLATE). GitHub enforces a form's `required` fields only on public
+# repositories, and an issue created through the API never saw a form at all, so this workflow
+# re-checks every report on every repository: a valid one gets the `okf:triaged` label, an invalid
+# one gets no label and ONE sticky comment naming the sections to fix.
+#
+# Why this is safe:
+#   - It runs only on `issues` events, in the context of the DEFAULT branch, so a pull request can
+#     not change what runs here. It must never use a privileged pull-request trigger, and nothing
+#     from a pull request is ever checked out. (That trigger's name is not spelled out here on
+#     purpose: the lint rule against it matches the whole file text, comments included.)
+#   - The issue text is untrusted. Only the issue number reaches the script from the event; the
+#     script reads the live issue through the API, parses the body as data in Python, never passes
+#     it to a shell or an expression, and composes its comment from fixed sentences and the
+#     contract's heading names only.
+#   - The only token is the job's own automatic token with `issues: write`. There are no secrets, no
+#     environment and no write access to the code.
+#
+# Every run decides from the live issue, so a delayed, repeated or out-of-order event converges on
+# the labels the issue implies. Events that cannot change the decision (any other label) get a unique
+# concurrency group and a skipped job, so they never cancel a triage that is running.
+name: okf-triage
+
+on:
+  issues:
+    types: [opened, edited, reopened, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: okf-triage-${{ github.event.issue.number }}-${{ ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || contains(fromJSON('["okf:wrong-answer","okf:missing","okf:update","okf:triaged"]'), github.event.label.name)) && 'triage' || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    if: ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || contains(fromJSON('["okf:wrong-answer","okf:missing","okf:update","okf:triaged"]'), github.event.label.name))
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/okf
+
+      - name: Triage the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OKF_REPO: ${{ github.repository }}
+        run: python3 -I .github/okf/triage.py

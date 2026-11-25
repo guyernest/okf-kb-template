@@ -1,0 +1,52 @@
+# Phase 214 (KTPL-02, D-16): ask for a knowledge base document to be brought up to date. The section
+# labels below are the headings in .github/okf/issue-contract.json (the contract the okf-triage
+# workflow checks); edit the contract and this form together, never one alone. The form applies its
+# kind label only; it never applies the label that starts the agent (that is a maintainer action).
+name: Update
+description: A document is out of date and something has changed
+labels: ["okf:update"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include passwords, keys, tokens or personal data in this report or in any
+        file you attach. Say what changed and where the change is recorded.
+  - type: textarea
+    id: document
+    attributes:
+      label: Document to update
+      description: The document, page or topic that is out of date.
+    validations:
+      required: true
+  - type: textarea
+    id: changed
+    attributes:
+      label: What changed
+      description: What is different now, as precisely as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source of the change
+      description: The decision, announcement or document that records the change.
+    validations:
+      required: true
+  - type: input
+    id: effective
+    attributes:
+      label: Effective date
+      description: When the change takes effect, if it is not already in force.
+  - type: upload
+    id: files
+    attributes:
+      label: Supporting files
+      description: Screenshots or documents that show the change.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.csv,.json,.log"
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else (attach files here too)
+      description: Anything that helps. You can drag files into this box to attach them.

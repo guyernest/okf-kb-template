@@ -1,0 +1,9 @@
+# environment <TAB> secret names, comma separated (the contract the lint secret homes of plans 214-06, 214-08 and 214-09 must match).
+# okf-bootstrap.sh creates each environment limited to the default branch and lists the secret names still missing;
+# okf-doctor.sh reports a missing name. Neither script ever writes or reads a secret value (D-14).
+# okf-engine-seed: the engine read token (D-02). publish: the publish role and audience (219 D-12).
+# agent: the model key and the agent GitHub App (D-03). okf-maintenance: the maintenance GitHub App (D-17).
+okf-engine-seed	ENGINE_RELEASE_TOKEN
+publish	OKF_PUBLISH_ROLE_ARN,OKF_PUBLISH_AUDIENCE
+agent	ANTHROPIC_API_KEY,OKF_AGENT_APP_CLIENT_ID,OKF_AGENT_APP_PRIVATE_KEY
+okf-maintenance	OKF_MAINT_APP_CLIENT_ID,OKF_MAINT_APP_PRIVATE_KEY

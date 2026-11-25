@@ -1,0 +1,30 @@
+# okf-check publish target — copy to .okf/publish.toml; changes need a code-owner review (/.okf/)
+#
+# This file is the ONLY place the publish workflow (okf-publish) takes its target from. The
+# workflow has no input and passes no instance flag, so the target cannot be overridden at run
+# time. It holds no account id, role or audience: those are secrets of the `publish` environment.
+#
+# schema_version  must be 1. Unknown keys are refused by the engine.
+# instance        the platform instance this repository publishes to.
+# minimum_engine  the lowest platform engine version this repository's bundle may be built on.
+#                 Keep it equal to the version in .okf/engine.lock, so a bundle checked locally
+#                 never builds on an older server engine. Raise it only after the platform's
+#                 publisher has been redeployed with that engine: the publisher reports its own
+#                 engine version, and a publish is refused while it reports an older one.
+#                 (Until the release that bumps .okf/engine.lock to 0.2.0 this minimum is ahead
+#                 of the lock: the template is not consumed before then.)
+# region          the AWS region of the platform; the workflow assumes its role there.
+# bundle_root     the directory that is published. It must equal the PR check's bundle path (the
+#                 repository variable OKF_BUNDLE_PATH, default `bundle`), so the published set is
+#                 the checked set. The engine's own default is `okf`; this template sets it.
+# function        optional; the publisher function name (a bare name, never an ARN).
+#                 The default is pmcp-okf-sync-publisher.
+#
+# The environment variables OKF_PUBLISH_FUNCTION and OKF_PUBLISH_REGION override `function` and
+# `region` for one run.
+schema_version = 1
+instance = "graphrag-your-kb"
+minimum_engine = "0.2.0"
+region = "us-east-1"
+bundle_root = "bundle"
+# function = "pmcp-okf-sync-publisher"

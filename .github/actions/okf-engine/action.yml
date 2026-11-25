@@ -1,0 +1,109 @@
+# Phase 212, KACT-02 (D-01..D-04): get the pinned okf-check engine onto the runner and prove it.
+#
+#   mode: restore  every PR job. Restores the default-branch cache entry; a miss fails closed
+#                  (D-02) and nothing is downloaded. No token.
+#   mode: seed     the trusted seed workflow only. Restore first (a hit refreshes the entry and
+#                  uses no token); on a miss, download with the read token, verify, then save.
+#
+# Order: lock -> restore -> miss (restore mode) -> seed download and checks (seed mode) ->
+# verify (sha256 + token-free --version, EVERY path) -> save (seed mode). The cache entry is
+# written only after the executable is verified, so a mislabelled or non-runnable binary never
+# becomes an immutable entry. An invalid entry that somehow exists is removed with
+# `gh cache delete <key>` and re-seeded (the runbook carries the procedure).
+#
+# The cache key comes from the pinned values in the lock (lock.sh), with no prefix fallback.
+# The release repository comes from the lock, never from the KB repo's owner (KACT-04).
+name: okf-engine
+description: Restore or seed the pinned okf-check engine and verify its checksum and version.
+
+inputs:
+  mode:
+    description: "restore (PR jobs) or seed (trusted seed workflow only)"
+    required: true
+  lock-file:
+    description: "Path to the engine lock, relative to the workspace"
+    required: false
+    default: .okf/engine.lock
+  token:
+    description: "Read-only token for the engine release repository; seed mode only"
+    required: false
+    default: ""
+
+outputs:
+  engine:
+    description: "Absolute path to the verified okf-check binary"
+    value: ${{ steps.verify.outputs.engine }}
+  version:
+    description: "Pinned engine version"
+    value: ${{ steps.lock.outputs.version }}
+  binary-sha256:
+    description: "Pinned sha256 of the okf-check binary"
+    value: ${{ steps.lock.outputs.binary_sha256 }}
+  version-line:
+    description: "First line of the binary's --version output"
+    value: ${{ steps.verify.outputs.version_line }}
+  key:
+    description: "Derived cache key"
+    value: ${{ steps.lock.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check mode
+      shell: bash
+      env:
+        OKF_MODE: ${{ inputs.mode }}
+      run: |
+        case "$OKF_MODE" in
+          restore | seed) ;;
+          *) printf '::error::okf-engine: mode must be restore or seed\n'; exit 1 ;;
+        esac
+
+    - name: Resolve the pinned engine
+      id: lock
+      shell: bash
+      env:
+        OKF_LOCK_FILE: ${{ inputs.lock-file }}
+      run: bash "$GITHUB_ACTION_PATH/lock.sh" resolve "$OKF_LOCK_FILE" --github-output
+
+    - name: Restore the engine cache
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/okf-engine
+        key: ${{ steps.lock.outputs.key }}
+
+    - name: Fail closed when the engine is not seeded
+      if: inputs.mode == 'restore' && steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        OKF_VERSION: ${{ steps.lock.outputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/verify-engine.sh" miss "$OKF_VERSION"
+
+    - name: Seed the engine from the release repository
+      if: inputs.mode == 'seed' && steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        OKF_VERSION: ${{ steps.lock.outputs.version }}
+        OKF_RELEASE_REPO: ${{ steps.lock.outputs.release_repo }}
+        OKF_ARCH: ${{ steps.lock.outputs.arch }}
+        OKF_TRIPLE: ${{ steps.lock.outputs.triple }}
+        OKF_ARCHIVE_SHA256: ${{ steps.lock.outputs.archive_sha256 }}
+        OKF_BINARY_SHA256: ${{ steps.lock.outputs.binary_sha256 }}
+      run: bash "$GITHUB_ACTION_PATH/seed-engine.sh"
+
+    - name: Verify the engine
+      id: verify
+      shell: bash
+      env:
+        OKF_BINARY_SHA256: ${{ steps.lock.outputs.binary_sha256 }}
+        OKF_VERSION: ${{ steps.lock.outputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/verify-engine.sh" verify "$HOME/.cache/okf-engine/okf-check" "$OKF_BINARY_SHA256" "$OKF_VERSION" --github-output
+
+    - name: Save the verified engine to the cache
+      if: inputs.mode == 'seed' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/okf-engine
+        key: ${{ steps.lock.outputs.key }}

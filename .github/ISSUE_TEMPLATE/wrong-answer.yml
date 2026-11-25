@@ -1,0 +1,58 @@
+# Phase 214 (KTPL-02, D-16): report a wrong or outdated answer. The section labels below are the
+# headings in .github/okf/issue-contract.json (the contract the okf-triage workflow checks); edit
+# the contract and this form together, never one alone. The form applies its kind label only; it
+# never applies the label that starts the agent (that is a maintainer action).
+name: Wrong answer
+description: The knowledge base gave an incorrect or outdated answer
+labels: ["okf:wrong-answer"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include passwords, keys, tokens or personal data in this report or in any
+        file you attach. Describe the problem in your own words and point to where the right
+        answer can be found.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question you asked
+      description: The question, word for word if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: answer
+    attributes:
+      label: Answer you received
+      description: What the knowledge base answered.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the answer should say
+      description: The correct answer, as you understand it.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: How you know (sources)
+      description: A document, a person, a decision or a date that shows the correct answer.
+  - type: textarea
+    id: cited
+    attributes:
+      label: Documents the answer cited
+      description: The documents or sources the answer pointed to, if it showed any.
+  - type: upload
+    id: files
+    attributes:
+      label: Supporting files
+      description: Screenshots or logs that show the problem.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.csv,.json,.log"
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else (attach files here too)
+      description: Anything that helps. You can drag files into this box to attach them.

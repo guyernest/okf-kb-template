@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "triaged_label": "okf:triaged",
+  "forbidden_labels": ["agent:propose", "okf:triaged"],
+  "marker": "<!-- okf-triage:v1 -->",
+  "kinds": {
+    "wrong-answer": {
+      "label": "okf:wrong-answer",
+      "form": "wrong-answer.yml",
+      "required": [
+        "Question you asked",
+        "Answer you received",
+        "What the answer should say"
+      ],
+      "optional": [
+        "How you know (sources)",
+        "Documents the answer cited",
+        "Supporting files",
+        "Anything else (attach files here too)"
+      ]
+    },
+    "missing": {
+      "label": "okf:missing",
+      "form": "missing-knowledge.yml",
+      "required": [
+        "Question you asked",
+        "What is missing"
+      ],
+      "optional": [
+        "Where the knowledge lives (sources)",
+        "Supporting files",
+        "Anything else (attach files here too)"
+      ]
+    },
+    "update": {
+      "label": "okf:update",
+      "form": "update.yml",
+      "required": [
+        "Document to update",
+        "What changed",
+        "Source of the change"
+      ],
+      "optional": [
+        "Effective date",
+        "Supporting files",
+        "Anything else (attach files here too)"
+      ]
+    }
+  }
+}

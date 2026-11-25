@@ -1,0 +1,19 @@
+# .okf/maintainers - who may carry a human stamp or a profile-configuration change (D-10).
+#
+# A pull request opened by a login listed here is checked with --trusted-human-review: the
+# findings about human-stamp and profile-configuration changes are shown as warnings instead
+# of errors, and they stay visible in the preview and the job summary. Everyone else gets
+# those changes as errors that block the merge.
+#
+# Rules:
+#   - one GitHub login per line; lines starting with # and blank lines are ignored
+#   - the list is read from the DEFAULT BRANCH only. A pull request that edits this file does
+#     not change who is trusted until the change is merged; /.okf/ is covered by CODEOWNERS, so
+#     adding a login needs a code-owner review
+#   - logins are matched case-insensitively, and only for authors of type User: a bot is never
+#     trusted, even when listed
+#   - organisation membership or repository access alone never makes anyone trusted
+#   - an unreadable or malformed list (a symlink, over 16 KiB, a line that is not a login, more
+#     than 200 logins) trusts nobody and the job summary says so
+#
+# A fresh repository trusts nobody: add logins below through a code-owner-reviewed change.

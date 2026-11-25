@@ -1,0 +1,134 @@
+# Phase 214 (KTPL-06; D-12, D-17, D-18): the template sync.
+#
+# A repository created from an exported template gets later template and action updates through ONE
+# reviewable pull request, never a direct push. Weekly, and on demand (optional `tag`), the `sync` job
+# fetches the newest `okf-kb-template-v<semver>` tag of the public template repository (anonymously) or
+# the given tag and opens or updates the pull request from the branch `okf-template-sync`. It overwrites
+# exactly the files `.okf/template-manifest` lists, deletes the ones a later manifest dropped, and merges
+# CODEOWNERS by appending rules; the knowledge bundle, `.okf/maintainers`, `.okf/publish.toml`,
+# `.okf/profile.json`, `.okf/agent.toml`, `README.md` and CODEOWNERS owner lines are never touched.
+#
+# Why this needs its own App: the sync changes `.github/workflows/*`, which only an App with the Workflows
+# permission may push (research Pitfall 4). That is the MAINTENANCE App (D-17), and its key lives only in
+# the `okf-maintenance` environment (default-branch deployment policy, set up by bootstrap), only in this
+# job's token step. The agent App has no such permission and shares nothing with this workflow.
+#
+# Opt-in: the job runs only when the repository variable OKF_MAINTENANCE_ENABLED is `true`, which bootstrap
+# sets. Nothing runs, and nothing fails, in the public template repository itself or in a repository nobody
+# has bootstrapped. Default branch only: the guard step accepts a schedule (GitHub schedules only the default
+# branch, and a schedule payload carries no repository object, so a job-level comparison with the default
+# branch's name would skip every scheduled run) and requires a manual dispatch to name the default branch. The
+# guard runs right after the checkout because it is a script of the repository.
+#
+# When the sync changes `.okf/engine.lock`, the `seed` job (the only holder of `actions: write`) dispatches
+# `okf-seed-engine` for the candidate pin, waits for it, and re-runs the failed `okf-check` of the sync
+# branch's head so the required check turns green on the same commit (D-12, 212 D-01). It never approves or
+# merges the pull request. A person still reviews it; CODEOWNERS and the ruleset require that.
+name: okf-template-sync
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Sync to this template tag (okf-kb-template-v<major>.<minor>.<patch>) instead of the newest one; empty takes the newest'
+        required: false
+        default: ''
+        type: string
+
+permissions: {}
+
+cache-mode: read
+
+concurrency:
+  group: okf-template-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: vars.OKF_MAINTENANCE_ENABLED == 'true'
+    environment: okf-maintenance
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      lock-changed: ${{ steps.sync.outputs.lock-changed }}
+      head-sha: ${{ steps.sync.outputs.head-sha }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Guard - default branch only
+        env:
+          OKF_EVENT: ${{ github.event_name }}
+          OKF_REF: ${{ github.ref }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+        run: bash .github/okf/maintenance-guard.sh
+
+      # The engine only gives the sync the bundle root it must never write under.
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      # The repository name comes from `github.repository`, not from the event payload, which a scheduled run may lack.
+      - name: Resolve the repository name
+        id: repo
+        env:
+          OKF_REPO: ${{ github.repository }}
+        run: printf 'name=%s\n' "${OKF_REPO#*/}" >>"$GITHUB_OUTPUT"
+
+      - name: Mint the maintenance App token
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.OKF_MAINT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OKF_MAINT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.repo.outputs.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Sync the template
+        id: sync
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OKF_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_TAG_INPUT: ${{ inputs.tag }}
+        run: bash .github/okf/template-sync.sh
+
+  # Holds only the workflow token's `actions: write` (plus the `contents: read` the checkout of the script needs). It
+  # has no environment and no secret, dispatches exactly okf-seed-engine for the candidate pin, and re-runs exactly the
+  # okf-check run of the sync branch's head (T-214-36).
+  seed:
+    needs: sync
+    if: needs.sync.outputs.lock-changed == 'true'
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out the scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/okf
+
+      - name: Seed the candidate engine pin and re-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          OKF_HEAD_SHA: ${{ needs.sync.outputs.head-sha }}
+        run: bash .github/okf/seed-and-recheck.sh

@@ -1,0 +1,114 @@
+# Phase 214 (KTPL-01; D-15, D-17): the weekly doctor.
+#
+# Once a week, and on demand, this workflow reads back the repository settings the bootstrap applies (the ruleset,
+# the environments and their branch policies, the secret NAMES, the labels, the variables, CODEOWNERS) with
+# `scripts/okf-doctor.sh` and keeps exactly one open issue labelled `okf:drift`, created by the maintenance App, current
+# with what it found: drift opens it or updates it in place, a clean run comments and closes it. The job fails while
+# drift remains, so a red scheduled run is the second signal.
+#
+# The doctor changes nothing. Its token is the MAINTENANCE App's (D-17), minted in the `okf-maintenance` environment
+# with read access to exactly what the doctor reads (administration, actions, environments, secrets, contents) and
+# `issues: write` for the one issue. It has no Variables permission, so the three variables the doctor compares are
+# passed in the environment (`--variables-from-env`). It never holds the Workflows permission the sync needs: this token
+# can change no setting and no file.
+#
+# Opt-in and default-branch only, exactly as okf-template-sync: the job runs only when OKF_MAINTENANCE_ENABLED is `true`
+# (bootstrap sets it), and the guard step, run right after the checkout because it is a script of the repository, accepts
+# a schedule (which carries no repository object to compare with) and requires a manual dispatch to name the default
+# branch.
+name: okf-doctor
+
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+cache-mode: read
+
+concurrency:
+  group: okf-doctor
+  cancel-in-progress: false
+
+jobs:
+  doctor:
+    if: vars.OKF_MAINTENANCE_ENABLED == 'true'
+    environment: okf-maintenance
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Guard - default branch only
+        env:
+          OKF_EVENT: ${{ github.event_name }}
+          OKF_REF: ${{ github.ref }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+        run: bash .github/okf/maintenance-guard.sh
+
+      # The repository name comes from `github.repository`, not from the event payload, which a scheduled run may lack.
+      - name: Resolve the repository name
+        id: repo
+        env:
+          OKF_REPO: ${{ github.repository }}
+        run: printf 'name=%s\n' "${OKF_REPO#*/}" >>"$GITHUB_OUTPUT"
+
+      - name: Mint the maintenance App token
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.OKF_MAINT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OKF_MAINT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.repo.outputs.name }}
+          permission-administration: read
+          permission-actions: read
+          permission-environments: read
+          permission-secrets: read
+          permission-contents: read
+          permission-issues: write
+
+      # A failing doctor is a finding, not a broken run: the report and the exit code are kept for the next step.
+      - name: Run the doctor
+        id: doctor
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_AGENT_BOT_LOGIN: ${{ vars.OKF_AGENT_BOT_LOGIN }}
+          OKF_MAINTENANCE_ENABLED: ${{ vars.OKF_MAINTENANCE_ENABLED }}
+          OKF_BUNDLE_PATH: ${{ vars.OKF_BUNDLE_PATH }}
+        run: |
+          set +e
+          bash scripts/okf-doctor.sh --repo "$OKF_REPO" --variables-from-env >"$RUNNER_TEMP/okf-doctor.txt"
+          code=$?
+          cat "$RUNNER_TEMP/okf-doctor.txt"
+          printf 'exit=%s\n' "$code" >>"$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Report drift
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OKF_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_DOCTOR_EXIT: ${{ steps.doctor.outputs.exit }}
+          OKF_DOCTOR_REPORT: ${{ runner.temp }}/okf-doctor.txt
+          OKF_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .github/okf/drift-issue.sh
+
+      - name: Doctor verdict
+        if: always()
+        env:
+          OKF_DOCTOR_EXIT: ${{ steps.doctor.outputs.exit }}
+        run: |
+          if [ "$OKF_DOCTOR_EXIT" != 0 ]; then
+            printf '::error::okf-doctor found drift, could not read a setting, or did not run (exit %s)\n' "${OKF_DOCTOR_EXIT:-none}"
+            exit 1
+          fi

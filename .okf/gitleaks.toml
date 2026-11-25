@@ -1,0 +1,7 @@
+# okf-secret-scan configuration (Phase 214, D-19). Template-owned on purpose: the scan reads this file from the pull
+# request's BASE commit, and a repository-local allow-list would weaken a required check. Tune the rules through a
+# reviewed template change, never here.
+title = "okf-secret-scan"
+
+[extend]
+useDefault = true

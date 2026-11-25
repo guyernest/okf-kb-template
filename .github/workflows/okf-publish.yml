@@ -1,0 +1,100 @@
+# Phase 219 (KPUB-04; D-02, D-11, D-12): publish this repository's bundle to the platform.
+#
+# A maintainer starts this workflow by hand (Actions tab -> okf-publish -> Run workflow). It runs
+# the engine's `publish` subcommand, which checks the bundle with the same rules as the PR check,
+# uploads it through a short-lived role session and stops at "awaiting approval": an administrator
+# on the platform approves the staged version. Nothing here goes live by itself.
+#
+# What it runs: the SEEDED engine (SC3). The engine step restores the pinned, checksum-verified
+# binary from the default branch's cache (`cache-mode: read`, seed it first with the Seed
+# workflow) and both engine steps bind OKF_ENGINE to exactly that step's output. No engine code
+# lives in this repository, and the policy lint (rule L18) fails any other binding.
+#
+# Where the target comes from (D-02): only `.okf/publish.toml`, which is code-owner reviewed
+# (/.okf/ in CODEOWNERS). The workflow has no input and passes no instance flag, so the target
+# cannot drift from the declared value. The region comes from the same file (D-11): the engine
+# prints it with `publish --print-region`, the step re-checks its shape before writing it to
+# $GITHUB_OUTPUT, and it is passed to configure-aws-credentials. `bundle_root` in that file must
+# equal the PR check's bundle path (the repository variable OKF_BUNDLE_PATH, default `bundle`), so
+# the published set is the checked set.
+#
+# Where the secrets live (D-12): the role ARN and the audience are secrets of the `publish`
+# ENVIRONMENT, never repository secrets, never a file in this repository. Only this job declares
+# the environment. The role ARN appears once, as `role-to-assume`; the audience appears once as
+# the credentials step's `audience` and once in the Publish step's env (the engine reads it from
+# there to request the OIDC token). configure-aws-credentials masks the account id
+# (`mask-aws-account-id: true`), and the engine never prints the role, the audience or the token.
+# Set it up once (see the CI runbook): create the environment, restrict its deployment branches
+# to the default branch now (recommended), and add the two secrets there. Required reviewers and
+# a publish-branch-only rule that is a checked requirement are Phase 215's; this workflow only
+# declares the environment to scope its two secrets.
+#
+# Exit codes of the Publish step (the engine's): 0 the bundle is staged and awaiting approval,
+# 1 the check or the platform refused it, 2 the configuration is wrong (a missing or invalid
+# .okf/publish.toml, a flag), 4 the publish failed, 5 the build is still running and the publish
+# is not lost (run the workflow again later). The run summary says which.
+name: okf-publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+cache-mode: read
+
+concurrency:
+  group: okf-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  okf-publish:
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    environment: publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Read the publish region
+        id: publish-config
+        shell: bash
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+        run: |
+          region="$("$OKF_ENGINE" publish --print-region)"
+          pattern='^[a-z]{2}(-[a-z]+)+-[0-9]$'
+          if ! [[ "$region" =~ $pattern ]]; then
+            printf '::error::the region declared in .okf/publish.toml is not an AWS region name\n'
+            exit 1
+          fi
+          printf 'region=%s\n' "$region" >>"$GITHUB_OUTPUT"
+
+      - name: Assume the publisher role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: ${{ steps.publish-config.outputs.region }}
+          role-to-assume: ${{ secrets.OKF_PUBLISH_ROLE_ARN }}
+          audience: ${{ secrets.OKF_PUBLISH_AUDIENCE }}
+          mask-aws-account-id: true
+          role-session-name: okf-publish
+          role-duration-seconds: 3600
+
+      - name: Publish
+        shell: bash
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_PUBLISH_AUDIENCE: ${{ secrets.OKF_PUBLISH_AUDIENCE }}
+        run: |
+          "$OKF_ENGINE" publish

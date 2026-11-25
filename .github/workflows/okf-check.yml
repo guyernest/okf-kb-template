@@ -1,0 +1,244 @@
+# Phase 212 (KACT-03, KPRV-01, KPRV-03; D-01, D-02, D-04, D-06, D-10, D-11): the pull-request check.
+#
+# The job `okf-check` is the REQUIRED status check of a KB repository. Its conclusion is the
+# engine's `check` exit code: 0 green, 1 red, anything else red ("no check completed").
+#
+#   - Never add a path or branch filter to this workflow: a skipped required check blocks
+#     merges for ever.
+#   - No secret, no write token. The workflow runs on `pull_request`, with `contents: read`,
+#     and only restores the engine from the default branch's cache (`cache-mode: read`); a PR
+#     can never write the cache. If the engine is not seeded the job fails with the exact
+#     instruction (D-02): run the Seed workflow on the default branch.
+#   - Fork PRs run the same way once the repository allows workflows from forks (they get no
+#     secrets, and none is needed).
+#   - Trust statement (Phase 214, D-07). What this job enforces ON ITS OWN: the engine's check
+#     (the exit code); for an agent-authored PR (head ref `agent/*`, or a Bot author whose login is
+#     the repository variable OKF_AGENT_BOT_LOGIN) that every change is an added or modified
+#     regular file under the default branch's bundle_root, measured from the merge-base; for EVERY
+#     PR that the bundle path this job validates (vars.OKF_BUNDLE_PATH, default `bundle`) equals
+#     that bundle_root; and that the committed rules skill equals the pinned engine's
+#     profile-independent output. The two verifier scripts of those steps (diff-scope.sh,
+#     skill-drift.sh) are read from the PR's BASE commit, never from the PR; only the pull request
+#     that introduces a script runs its own copy, with a notice.
+#     What it CANNOT enforce: a PR can edit this file, the actions and the engine pin, and a
+#     `pull_request` workflow runs from the merge ref, so a PR that edits this very file can change
+#     what the required check runs. An agent-produced PR cannot do that (`propose` refuses any
+#     out-of-root change before pushing, and the agent App has no workflows permission, so GitHub
+#     refuses a workflow-file push). For human PRs the control is code-owner review of /.github/,
+#     /.okf/, /.claude/ and /scripts/ (CODEOWNERS plus the ruleset "require review from Code
+#     Owners"), never trust in the PR's own files. A GitHub-pinned required workflow is not
+#     available to repository rulesets; it is recorded as deferred. The job summary warns when a
+#     PR touches .github/ or .okf/.
+#   - Trusted human review (--trusted-human-review) comes only from `.okf/maintainers` as it
+#     exists on the DEFAULT BRANCH (D-10); the author's association is never consulted.
+#
+# Stage 1 of the PR preview (D-06): this job uploads the artifact `okf-preview` (comment.md and
+# pr.json). The workflow okf-preview-comment.yml, triggered by this workflow's completion, is
+# the only one that holds a write token and posts the sticky comment. Presentation is best
+# effort: the summary-part and upload steps cannot fail the job, and the last step decides the
+# conclusion from the check exit code and the outcomes of the two steps below.
+name: okf-check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+cache-mode: read
+
+concurrency:
+  group: okf-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  okf-check:
+    name: okf-check
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Run okf-check
+        id: check
+        uses: ./.github/actions/okf-check
+        with:
+          engine: ${{ steps.engine.outputs.engine }}
+          version-line: ${{ steps.engine.outputs.version-line }}
+          pinned-sha256: ${{ steps.engine.outputs.binary-sha256 }}
+          bundle-path: ${{ vars.OKF_BUNDLE_PATH || 'bundle' }}
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          pr-number: ${{ github.event.pull_request.number }}
+          author-login: ${{ github.event.pull_request.user.login }}
+          author-type: ${{ github.event.pull_request.user.type }}
+          default-branch: ${{ github.event.repository.default_branch }}
+          out-dir: ${{ runner.temp }}/okf-check
+
+      # D-07: the agent's limits on the pull-request side. The script is the BASE commit's copy.
+      - name: okf-check agent scope
+        id: scope
+        if: always() && steps.engine.outcome == 'success'
+        continue-on-error: true
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          OKF_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OKF_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          OKF_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          OKF_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          OKF_AGENT_BOT_LOGIN: ${{ vars.OKF_AGENT_BOT_LOGIN }}
+          OKF_BUNDLE_PATH: ${{ vars.OKF_BUNDLE_PATH || 'bundle' }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          fail_config() {
+            printf 'okf-check: %s\n' "$1"
+            printf 'reason=config\n' >>"$GITHUB_OUTPUT"
+            exit 2
+          }
+          [[ $OKF_BASE_SHA =~ ^[0-9a-f]{40}$ ]] || fail_config 'the base commit id is not a full commit id'
+          git cat-file -e "$OKF_BASE_SHA^{commit}" 2>/dev/null || fail_config 'the base commit is not in this checkout, so the verifier script cannot be read from it'
+          mkdir -p "$RUNNER_TEMP/okf-verifier"
+          entry="$(git ls-tree "$OKF_BASE_SHA" -- .github/actions/okf-check/diff-scope.sh)"
+          if [ -n "$entry" ]; then
+            case "$entry" in
+              '100644 blob '* | '100755 blob '*) ;;
+              *) fail_config 'the base commit has diff-scope.sh but not as a regular file' ;;
+            esac
+            git show "$OKF_BASE_SHA:.github/actions/okf-check/diff-scope.sh" >"$RUNNER_TEMP/okf-verifier/diff-scope.sh"
+          else
+            printf 'okf-check: this pull request introduces the agent-scope script; it is trusted after merge (code-owner review applies)\n'
+            cp .github/actions/okf-check/diff-scope.sh "$RUNNER_TEMP/okf-verifier/diff-scope.sh"
+          fi
+          bash "$RUNNER_TEMP/okf-verifier/diff-scope.sh" pr
+
+      # D-09: the committed rules skill equals the pinned engine's profile-independent render.
+      - name: okf-check rules skill
+        id: skill
+        if: always() && steps.engine.outcome == 'success'
+        continue-on-error: true
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          fail_config() {
+            printf 'okf-check: %s\n' "$1"
+            exit 2
+          }
+          [[ $OKF_BASE_SHA =~ ^[0-9a-f]{40}$ ]] || fail_config 'the base commit id is not a full commit id'
+          git cat-file -e "$OKF_BASE_SHA^{commit}" 2>/dev/null || fail_config 'the base commit is not in this checkout, so the verifier script cannot be read from it'
+          mkdir -p "$RUNNER_TEMP/okf-verifier"
+          entry="$(git ls-tree "$OKF_BASE_SHA" -- .github/actions/okf-check/skill-drift.sh)"
+          if [ -n "$entry" ]; then
+            case "$entry" in
+              '100644 blob '* | '100755 blob '*) ;;
+              *) fail_config 'the base commit has skill-drift.sh but not as a regular file' ;;
+            esac
+            git show "$OKF_BASE_SHA:.github/actions/okf-check/skill-drift.sh" >"$RUNNER_TEMP/okf-verifier/skill-drift.sh"
+          else
+            printf 'okf-check: this pull request introduces the rules-skill drift script; it is trusted after merge (code-owner review applies)\n'
+            cp .github/actions/okf-check/skill-drift.sh "$RUNNER_TEMP/okf-verifier/skill-drift.sh"
+          fi
+          bash "$RUNNER_TEMP/okf-verifier/skill-drift.sh"
+
+      # D-11: the engine splits the job summary into up to five parts, each its own step, so each
+      # stays under GitHub's 1 MiB per-step limit and every finding is listed. A step whose part
+      # does not exist is skipped; a missing, symlinked or oversize part becomes a fixed notice.
+      - name: okf-check summary part 1
+        if: always() && steps.check.outputs.summary-parts >= 1
+        continue-on-error: true
+        env:
+          OKF_SUMMARY_PART: ${{ steps.check.outputs.summary-dir }}/summary-1.md
+        run: bash .github/actions/okf-check/run-check.sh --append-summary "$OKF_SUMMARY_PART"
+
+      - name: okf-check summary part 2
+        if: always() && steps.check.outputs.summary-parts >= 2
+        continue-on-error: true
+        env:
+          OKF_SUMMARY_PART: ${{ steps.check.outputs.summary-dir }}/summary-2.md
+        run: bash .github/actions/okf-check/run-check.sh --append-summary "$OKF_SUMMARY_PART"
+
+      - name: okf-check summary part 3
+        if: always() && steps.check.outputs.summary-parts >= 3
+        continue-on-error: true
+        env:
+          OKF_SUMMARY_PART: ${{ steps.check.outputs.summary-dir }}/summary-3.md
+        run: bash .github/actions/okf-check/run-check.sh --append-summary "$OKF_SUMMARY_PART"
+
+      - name: okf-check summary part 4
+        if: always() && steps.check.outputs.summary-parts >= 4
+        continue-on-error: true
+        env:
+          OKF_SUMMARY_PART: ${{ steps.check.outputs.summary-dir }}/summary-4.md
+        run: bash .github/actions/okf-check/run-check.sh --append-summary "$OKF_SUMMARY_PART"
+
+      - name: okf-check summary part 5
+        if: always() && steps.check.outputs.summary-parts >= 5
+        continue-on-error: true
+        env:
+          OKF_SUMMARY_PART: ${{ steps.check.outputs.summary-dir }}/summary-5.md
+        run: bash .github/actions/okf-check/run-check.sh --append-summary "$OKF_SUMMARY_PART"
+
+      # The artifact the poster workflow consumes: exactly comment.md and pr.json (D-06).
+      - name: Upload the preview
+        if: always() && steps.check.outputs.preview-dir != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: okf-preview
+          path: ${{ steps.check.outputs.preview-dir }}
+          retention-days: 7
+
+      # The complete findings (findings.json and the summary parts) for anyone reading the run.
+      - name: Upload the findings
+        if: always() && steps.check.outputs.findings-dir != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: okf-findings
+          path: ${{ steps.check.outputs.findings-dir }}
+          retention-days: 14
+
+      # The only step that decides the job's conclusion. A restore failure (D-02), an invalid
+      # input or a check that did not complete leaves no check exit code, which is red. The scope
+      # and rules-skill steps are `continue-on-error`; this step fails on their outcomes.
+      - name: okf-check verdict
+        if: always()
+        env:
+          CHECK_EXIT: ${{ steps.check.outputs.check-exit }}
+          SCOPE_OUTCOME: ${{ steps.scope.outcome }}
+          SCOPE_REASON: ${{ steps.scope.outputs.reason }}
+          SKILL_OUTCOME: ${{ steps.skill.outcome }}
+        run: |
+          rc=0
+          case "$CHECK_EXIT" in
+            0) printf 'okf-check: PASS\n' ;;
+            1) printf 'okf-check: FAIL\n'; rc=1 ;;
+            *) printf 'okf-check: no check completed\n'; rc=2 ;;
+          esac
+          if [ "$SCOPE_OUTCOME" != success ]; then
+            case "$SCOPE_REASON" in
+              scope) printf 'okf-check: FAIL (an agent pull request changes files outside the bundle root)\n' ;;
+              bundle-path-mismatch) printf 'okf-check: FAIL (OKF_BUNDLE_PATH differs from bundle_root)\n' ;;
+              *) printf 'okf-check: FAIL (the agent-scope step could not run)\n' ;;
+            esac
+            [ "$rc" -ne 0 ] || rc=1
+          fi
+          if [ "$SKILL_OUTCOME" != success ]; then
+            printf 'okf-check: FAIL (the rules skill differs from the pinned engine)\n'
+            [ "$rc" -ne 0 ] || rc=1
+          fi
+          exit "$rc"

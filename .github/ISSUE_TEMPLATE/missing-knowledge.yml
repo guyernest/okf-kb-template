@@ -1,0 +1,46 @@
+# Phase 214 (KTPL-02, D-16): report knowledge the knowledge base does not have. The section labels
+# below are the headings in .github/okf/issue-contract.json (the contract the okf-triage workflow
+# checks); edit the contract and this form together, never one alone. The form applies its kind
+# label only; it never applies the label that starts the agent (that is a maintainer action).
+name: Missing knowledge
+description: The knowledge base could not answer, or has no document on this
+labels: ["okf:missing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include passwords, keys, tokens or personal data in this report or in any
+        file you attach. Describe what is missing in your own words and say where the knowledge
+        can be found.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question you asked
+      description: The question, word for word if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: missing
+    attributes:
+      label: What is missing
+      description: The fact, rule or document the knowledge base should have had.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Where the knowledge lives (sources)
+      description: A document, a person, a decision or a date where it can be found.
+  - type: upload
+    id: files
+    attributes:
+      label: Supporting files
+      description: Screenshots, documents or logs that hold the knowledge.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.pdf,.txt,.md,.csv,.json,.log"
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else (attach files here too)
+      description: Anything that helps. You can drag files into this box to attach them.

@@ -1,0 +1,87 @@
+# Phase 212 (KPRV-02, D-09): the bundle view as a downloadable artifact.
+#
+# What it is: a small static site (index.html and its data) that shows the bundle's documents,
+# unparsed files and links. It carries METADATA ONLY - no document bodies - so the artifact is
+# safe to keep in the repository's own artifacts. To read it: open this workflow's run, download
+# the `bundle-view` artifact, unzip it and open `index.html` in a browser. Artifacts are kept for
+# 30 days.
+#
+# When it runs: after the Seed workflow (okf-seed-engine) completes successfully for a push to
+# the default branch, a scheduled run or a manual dispatch, so the pinned engine is always in the
+# cache when this workflow restores it; it never races the seed (a plain `push` trigger would, on
+# the first push, after a pin change or after a cache eviction). A failed seed produces no view:
+# the seed's own red run is the signal. You can also run it by hand from the default branch.
+#
+# Security: `contents: read`, no secret, restore-only cache (`cache-mode: read`). A `workflow_run`
+# job runs the default branch's own copy of this file, and the checkout below is the default-branch
+# commit the seed ran for (the job `if` ties it to the default branch). The bundle view is never
+# published outside the repository's artifacts unless a maintainer opts in (okf-pages.yml).
+name: okf-bundle-view
+
+on:
+  workflow_run:
+    workflows: [okf-seed-engine]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+cache-mode: read
+
+concurrency:
+  group: okf-bundle-view
+  cancel-in-progress: true
+
+jobs:
+  okf-bundle-view:
+    if: >-
+      (github.event_name == 'workflow_run'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.head_branch == github.event.repository.default_branch
+      && github.event.workflow_run.event != 'pull_request')
+      || (github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out the seeded commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Build the bundle view
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_BUNDLE_PATH: ${{ vars.OKF_BUNDLE_PATH || 'bundle' }}
+          OKF_VIEW_OUT: ${{ runner.temp }}/bundle-view
+        run: |
+          bash .github/actions/okf-check/run-check.sh --validate-bundle-path "$OKF_BUNDLE_PATH"
+          mkdir -p "$OKF_VIEW_OUT"
+          # The engine's text is bundle-derived: print it only inside a stop-commands block.
+          token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          printf '::stop-commands::%s\n' "$token"
+          set +e
+          "$OKF_ENGINE" view "$OKF_BUNDLE_PATH" --out "$OKF_VIEW_OUT"
+          code=$?
+          set -e
+          printf '::%s::\n' "$token"
+          if [ "$code" -ne 0 ]; then
+            printf '::error::okf-bundle-view: the engine did not write a view (exit %s)\n' "$code"
+            exit 1
+          fi
+
+      - name: Upload the bundle view
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-view
+          path: ${{ runner.temp }}/bundle-view/
+          retention-days: 30
+          if-no-files-found: error

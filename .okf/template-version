@@ -1,0 +1,6 @@
+# okf-template-sync: where this repository's template files came from. Written by the template export
+# (okf-template-export) and rewritten by `okf-template-sync`; it is repository-owned and never listed in the
+# manifest. `tag=unreleased` marks a copy that was not created from an exported template: the sync refuses
+# to run there.
+repo=guyernest/okf-kb-template
+tag=okf-kb-template-v0.1.0

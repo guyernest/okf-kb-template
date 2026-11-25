@@ -1,0 +1,91 @@
+# Phase 212 (KPRV-02, D-09): optional GitHub Pages publish of the bundle view. SHIPPED DISABLED.
+#
+# Nothing is published to Pages unless a maintainer opts in. To enable it:
+#   1. set the repository variable OKF_PAGES_PUBLISH to `true`,
+#   2. set Settings -> Pages -> Source to "GitHub Actions",
+#   3. run this workflow by hand (Actions tab -> okf-pages -> Run workflow), or add a push
+#      trigger yourself if you want every default-branch push published.
+# Read the runbook first: a Pages site of a private repository can be publicly reachable on
+# plans without private Pages, and the view lists document titles, paths, trust tiers and links
+# (metadata only, no document bodies) - that is still the content of your knowledge base.
+#
+# Without the variable both jobs are skipped. No secret is used; the deploy job holds the Pages
+# and OIDC permissions it needs and nothing else. The engine is only restored from the
+# default-branch cache (seed it first with the Seed workflow).
+name: okf-pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+cache-mode: read
+
+concurrency:
+  group: okf-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: vars.OKF_PAGES_PUBLISH == 'true'
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Build the bundle view
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_BUNDLE_PATH: ${{ vars.OKF_BUNDLE_PATH || 'bundle' }}
+          OKF_SITE_OUT: ${{ runner.temp }}/site
+        run: |
+          bash .github/actions/okf-check/run-check.sh --validate-bundle-path "$OKF_BUNDLE_PATH"
+          mkdir -p "$OKF_SITE_OUT"
+          token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          printf '::stop-commands::%s\n' "$token"
+          set +e
+          "$OKF_ENGINE" view "$OKF_BUNDLE_PATH" --out "$OKF_SITE_OUT"
+          code=$?
+          set -e
+          printf '::%s::\n' "$token"
+          if [ "$code" -ne 0 ]; then
+            printf '::error::okf-pages: the engine did not write a view (exit %s)\n' "$code"
+            exit 1
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    needs: build
+    if: vars.OKF_PAGES_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1,0 +1,389 @@
+# Phase 214 (KTPL-03, KTPL-04, KTPL-05; D-01 to D-08, D-17): the maintainer-triggered agent.
+#
+# A maintainer adds the label `agent:propose` to a triaged issue (a report that passed okf-triage)
+# and this workflow decides, from LIVE GitHub state, whether that person may start the agent. Three
+# jobs, each holding the least it needs:
+#   gate     the automatic token only. Decides, reads the caps, finds the proposal branch, freezes the
+#            issue into an inert snapshot (plus the rules skill rendered by the pinned engine).
+#   agent    ANTHROPIC_API_KEY and a read-only token, nothing else. Runs Claude Code on the snapshot
+#            inside a boundary the CLI itself enforces: only Read, Edit, Write, Glob, Grep and Bash
+#            exist, file tools are confined to the workspace, an unapproved call is denied, and the
+#            one command that may run is `okf-agent-check`, a fixed-argument wrapper around the engine.
+#            It has no git, no network-capable tool and no write credential. Containment does not depend on
+#            that boundary holding: before the model runs the job stages trusted copies of the scripts it runs
+#            afterwards (`$RUNNER_TEMP/okf-trusted/`) and records the workspace's git control state; afterwards it
+#            checks that state before any git command, searches the packaged result for the model key and
+#            checks the session's own tool set. Any failed check leaves a status-only result (`contained:<reason>`).
+#   propose  the only holder of a write token (the agent App's installation token). Treats the agent's
+#            patch as hostile input: applies it in a data worktree, enforces the scope (bundle root
+#            only, added or modified regular files), the provenance form, the index line and the
+#            engine's own check, then commits with trailers, pushes `agent/issue-<n>` (never forced)
+#            and opens or updates ONE pull request. It never calls a reviews or merge endpoint.
+# Both credentialed jobs check out only the default-branch commit the gate recorded (`code-ref`).
+# An existing `agent/issue-<n>` branch is data: its bundle files are copied in, nothing else of it is
+# ever executed or loaded as configuration.
+#
+# Who may trigger it:
+#   - Only a human user whose live repository permission is `admin` or `write` (the `maintain` role
+#     is reported as `write`). The gate reads `collaborators/<login>/permission` itself on every
+#     run. It never trusts the author association in the event, the labels already on the issue or
+#     a bot exemption in any action: an App, a bot or an organization is refused whatever it holds.
+#   - Anyone else is ignored, and the refusal is recorded: a line in the job summary and one issue
+#     comment naming the actor and what the gate found.
+#
+# What the gate checks before it lets a run through:
+#   - the issue still carries `okf:triaged` and exactly one report-kind label, AND the same
+#     validator okf-triage uses (triage.py --decide-only) accepts the live body for that kind, so
+#     a stale or hand-applied label never admits an invalid report;
+#   - the issue text did not change after the trigger: the body and title hashes in the event
+#     payload must equal one live read. The agent later receives only the snapshot artifact built
+#     from that same read, never the live issue.
+#
+# Why this is safe:
+#   - It runs only on `issues` events, in the context of the DEFAULT branch, so a pull request can
+#     not change what runs here, and nothing from a pull request is checked out.
+#   - The issue text is untrusted. It reaches scripts only as data (a file), never in a shell word,
+#     an expression or the log. The snapshot is sanitized and wrapped in nonce-bearing markers.
+#   - The gate job has the automatic token with `issues: write` and read access to the code. No
+#     secret, no environment and no OIDC token.
+#   - The trigger label is removed in every outcome, so a maintainer re-triggers by adding it again.
+#
+# The concurrency group includes the label name, so an unrelated label event on the same issue (for
+# example `okf:triaged`) never evicts a queued agent run, and a queued run is never cancelled.
+name: okf-agent
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+cache-mode: read
+
+concurrency:
+  group: okf-agent-${{ github.event.issue.number }}-${{ github.event.label.name }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: github.event.label.name == 'agent:propose'
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      verdict: ${{ steps.decide.outputs.verdict }}
+      issue: ${{ steps.decide.outputs.issue }}
+      triggered-by: ${{ steps.decide.outputs.triggered-by }}
+      kind: ${{ steps.decide.outputs.kind }}
+      model: ${{ steps.config.outputs.model }}
+      max-turns: ${{ steps.config.outputs.max-turns }}
+      timeout-minutes: ${{ steps.config.outputs.timeout-minutes }}
+      max-budget-usd: ${{ steps.config.outputs.max-budget-usd }}
+      code-ref: ${{ steps.branch.outputs.code-ref }}
+      start-ref: ${{ steps.branch.outputs.start-ref }}
+      branch-exists: ${{ steps.branch.outputs.branch-exists }}
+      check-base: ${{ steps.branch.outputs.check-base }}
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            .github/okf
+            .github/actions
+            .okf
+
+      - name: Check the trigger
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ github.event.issue.number }}
+          OKF_SENDER: ${{ github.event.sender.login }}
+          OKF_SENDER_TYPE: ${{ github.event.sender.type }}
+        run: bash .github/okf/agent/gate.sh check
+
+      - name: Restore the pinned engine
+        id: engine
+        if: steps.gate.outputs.verdict == 'allowed'
+        continue-on-error: true
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Find the proposal branch
+        id: branch
+        if: steps.gate.outputs.verdict == 'allowed' && steps.engine.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ github.event.issue.number }}
+          OKF_SENDER: ${{ github.event.sender.login }}
+          OKF_SENDER_TYPE: ${{ github.event.sender.type }}
+          OKF_PERMISSION: ${{ steps.gate.outputs.permission }}
+          OKF_ROLE: ${{ steps.gate.outputs.role }}
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_CODE_REF: ${{ github.sha }}
+        run: bash .github/okf/agent/gate.sh branch
+
+      - name: Read the caps
+        id: config
+        if: steps.gate.outputs.verdict == 'allowed' && steps.branch.outputs.verdict == 'allowed'
+        continue-on-error: true
+        run: python3 -I .github/okf/agent/config.py
+
+      - name: Take the snapshot
+        id: snapshot
+        if: steps.gate.outputs.verdict == 'allowed' && steps.branch.outputs.verdict == 'allowed' && steps.config.outcome == 'success'
+        continue-on-error: true
+        env:
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ github.event.issue.number }}
+          OKF_KIND: ${{ steps.gate.outputs.kind }}
+          OKF_TRIGGERED_BY: ${{ steps.gate.outputs.triggered-by }}
+        run: python3 -I .github/okf/agent/snapshot.py --out "$RUNNER_TEMP/okf-snapshot"
+
+      - name: Render the rules skill
+        id: skill
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+        run: '"$OKF_ENGINE" skill --out "$RUNNER_TEMP/okf-snapshot/skill" --repo-root .'
+
+      - name: Upload the snapshot
+        id: upload
+        if: steps.skill.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: okf-agent-snapshot
+          path: ${{ runner.temp }}/okf-snapshot
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Decide
+        id: decide
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ github.event.issue.number }}
+          OKF_SENDER: ${{ github.event.sender.login }}
+          OKF_SENDER_TYPE: ${{ github.event.sender.type }}
+          GATE_VERDICT: ${{ steps.gate.outputs.verdict }}
+          GATE_REASON: ${{ steps.gate.outputs.reason }}
+          GATE_PERMISSION: ${{ steps.gate.outputs.permission }}
+          GATE_ROLE: ${{ steps.gate.outputs.role }}
+          GATE_KIND: ${{ steps.gate.outputs.kind }}
+          GATE_TRIGGERED_BY: ${{ steps.gate.outputs.triggered-by }}
+          CONFIG_OUTCOME: ${{ steps.config.outcome }}
+          BRANCH_OUTCOME: ${{ steps.branch.outcome }}
+          BRANCH_VERDICT: ${{ steps.branch.outputs.verdict }}
+          BRANCH_REASON: ${{ steps.branch.outputs.reason }}
+          SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
+          SNAPSHOT_REASON: ${{ steps.snapshot.outputs.reason }}
+          SKILL_OUTCOME: ${{ steps.skill.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: bash .github/okf/agent/gate.sh decide
+
+      - name: Release the trigger label
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ github.event.issue.number }}
+        run: bash .github/okf/agent/gate.sh release
+
+  agent:
+    needs: gate
+    if: needs.gate.outputs.verdict == 'allowed'
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    environment: agent
+    timeout-minutes: ${{ fromJSON(needs.gate.outputs.timeout-minutes) }}
+    permissions:
+      contents: read
+    steps:
+      # The default branch's commit the gate recorded, never the proposal branch: every script, the
+      # composite actions, the `.claude/` settings and the engine pin come from here.
+      - name: Check out the default-branch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.code-ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the snapshot
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: okf-agent-snapshot
+          path: .okf-snapshot
+
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Prepare the workspace
+        id: prepare
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_ENGINE_SHA256: ${{ steps.engine.outputs.binary-sha256 }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ needs.gate.outputs.issue }}
+          OKF_KIND: ${{ needs.gate.outputs.kind }}
+          OKF_CODE_REF: ${{ needs.gate.outputs.code-ref }}
+          OKF_START_REF: ${{ needs.gate.outputs.start-ref }}
+          OKF_BRANCH_EXISTS: ${{ needs.gate.outputs.branch-exists }}
+          OKF_CHECK_BASE: ${{ needs.gate.outputs.check-base }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/okf/agent/workspace.sh prepare
+
+      # The scripts this job runs after the model are copied out of the workspace now, while it still holds
+      # only default-branch code, and the git control state is recorded. Nothing after the model runs a file
+      # from the workspace, and no git command runs before the recorded state has been proven unchanged.
+      - name: Stage the trusted scripts
+        run: bash .github/okf/agent/contain.sh stage
+
+      - name: Record the workspace state
+        run: bash "$RUNNER_TEMP/okf-trusted/contain.sh" baseline
+
+      - name: Run the agent
+        id: agent
+        uses: anthropics/claude-code-action@eb56b6666facdbd501035f4a0269d8caee2e7a8b # v1.0.289
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: ${{ steps.prepare.outputs.prompt }}
+          claude_args: >-
+            --model ${{ needs.gate.outputs.model }}
+            --max-turns ${{ needs.gate.outputs.max-turns }}
+            --max-budget-usd ${{ needs.gate.outputs.max-budget-usd }}
+            --permission-mode acceptEdits
+            --permission-prompts none
+            --restricted
+            --tools "Read,Edit,Write,Glob,Grep,Bash"
+            --allowedTools "Bash(okf-agent-check)"
+            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
+
+      - name: Check the workspace
+        if: always()
+        run: bash "$RUNNER_TEMP/okf-trusted/contain.sh" verify
+
+      - name: Package the result
+        id: package
+        if: always()
+        env:
+          OKF_AGENT_OUTCOME: ${{ steps.agent.outcome }}
+        run: bash "$RUNNER_TEMP/okf-trusted/workspace.sh" package
+
+      # The one step after the model that holds the key, so it runs a staged copy and nothing else.
+      - name: Check the result for the model key
+        if: always()
+        env:
+          OKF_MODEL_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: bash "$RUNNER_TEMP/okf-trusted/contain.sh" key-check
+
+      - name: Check the agent session
+        if: always()
+        env:
+          OKF_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: python3 -I "$RUNNER_TEMP/okf-trusted/session-check.py" --run
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: okf-agent-result
+          path: ${{ runner.temp }}/okf-result
+          retention-days: 3
+          if-no-files-found: warn
+
+  propose:
+    needs: [gate, agent]
+    if: always() && needs.gate.outputs.verdict == 'allowed'
+    runs-on: ${{ vars.OKF_RUNNER || 'ubuntu-latest' }}
+    environment: agent
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Default-branch code only, as in the agent job. The proposal branch is data (see propose.sh).
+      - name: Check out the default-branch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.code-ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the result
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: okf-agent-result
+          path: ${{ runner.temp }}/okf-result
+
+      - name: Restore the pinned engine
+        id: engine
+        uses: ./.github/actions/okf-engine
+        with:
+          mode: restore
+
+      - name: Validate the proposal
+        id: prepare
+        env:
+          OKF_ENGINE: ${{ steps.engine.outputs.engine }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ needs.gate.outputs.issue }}
+          OKF_KIND: ${{ needs.gate.outputs.kind }}
+          OKF_CODE_REF: ${{ needs.gate.outputs.code-ref }}
+          OKF_START_REF: ${{ needs.gate.outputs.start-ref }}
+          OKF_BRANCH_EXISTS: ${{ needs.gate.outputs.branch-exists }}
+          OKF_CHECK_BASE: ${{ needs.gate.outputs.check-base }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/okf/agent/propose.sh prepare
+
+      - name: Mint the agent App token
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.OKF_AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.OKF_AGENT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: Open or update the pull request
+        if: steps.prepare.outputs.outcome == 'ready'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OKF_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ needs.gate.outputs.issue }}
+          OKF_KIND: ${{ needs.gate.outputs.kind }}
+          OKF_CODE_REF: ${{ needs.gate.outputs.code-ref }}
+          OKF_START_REF: ${{ needs.gate.outputs.start-ref }}
+          OKF_BRANCH_EXISTS: ${{ needs.gate.outputs.branch-exists }}
+          OKF_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          OKF_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OKF_TRIGGERED_BY: ${{ needs.gate.outputs.triggered-by }}
+          OKF_MODEL: ${{ needs.gate.outputs.model }}
+          OKF_ENGINE_VERSION_LINE: ${{ steps.engine.outputs.version-line }}
+        run: bash .github/okf/agent/propose.sh publish
+
+      - name: Report on the issue
+        if: always() && steps.prepare.outputs.outcome != 'ready'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          OKF_REPO: ${{ github.repository }}
+          OKF_ISSUE: ${{ needs.gate.outputs.issue }}
+          OKF_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OKF_OUTCOME: ${{ steps.prepare.outputs.outcome }}
+        run: bash .github/okf/agent/propose.sh report

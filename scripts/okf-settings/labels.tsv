@@ -1,0 +1,8 @@
+# name <TAB> color <TAB> description (the six D-16 labels). okf-bootstrap.sh creates a missing label and
+# corrects a colour or description that differs; okf-doctor.sh reports a missing label.
+okf:wrong-answer	d73a4a	A knowledge-base answer was wrong or outdated
+okf:missing	fbca04	Knowledge the knowledge base does not have yet
+okf:update	0e8a16	A document needs to change
+okf:triaged	0075ca	Triage found the report complete (set by okf-triage)
+agent:propose	5319e7	Maintainer-only trigger: runs the agent on this issue
+okf:drift	b60205	Repository settings drift found by the weekly okf-doctor

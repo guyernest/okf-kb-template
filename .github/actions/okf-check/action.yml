@@ -1,0 +1,79 @@
+# Phase 212 (KACT-03, KPRV-01): run the pinned okf-check engine on a pull request and stage the
+# job summary parts, the annotations and the preview artifact. All logic is in run-check.sh,
+# which reads only the environment this action maps from its inputs. The action never fails the
+# job on a check result or a rendering problem: the workflow's last step (`okf-check verdict`)
+# decides the conclusion from the `check-exit` output.
+name: okf-check
+description: Run the pinned okf-check engine against a pull request and stage its preview and summary.
+
+inputs:
+  engine:
+    description: "Absolute path to the verified okf-check binary (okf-engine output)"
+    required: true
+  version-line:
+    description: "First line of the engine's --version output (okf-engine output)"
+    required: true
+  pinned-sha256:
+    description: "Pinned sha256 of the engine binary (okf-engine output)"
+    required: true
+  bundle-path:
+    description: "Repository-relative path of the knowledge bundle"
+    required: true
+  base-sha:
+    description: "Base commit of the pull request"
+    required: true
+  head-sha:
+    description: "Head commit of the pull request"
+    required: true
+  pr-number:
+    description: "Pull request number"
+    required: true
+  author-login:
+    description: "Pull request author login"
+    required: true
+  author-type:
+    description: "Pull request author type (User, Bot, Organization, Mannequin)"
+    required: true
+  default-branch:
+    description: "The repository's default branch (the maintainer list is read from it)"
+    required: true
+  out-dir:
+    description: "Fresh directory the action writes its staged output to"
+    required: true
+
+outputs:
+  check-exit:
+    description: "The engine's check exit code (0 green, 1 red, anything else: no check completed)"
+    value: ${{ steps.run.outputs.check-exit }}
+  preview-dir:
+    description: "Directory holding exactly comment.md and pr.json (artifact okf-preview)"
+    value: ${{ steps.run.outputs.preview-dir }}
+  findings-dir:
+    description: "Directory holding findings.json and the summary parts (artifact okf-findings)"
+    value: ${{ steps.run.outputs.findings-dir }}
+  summary-dir:
+    description: "Directory holding summary-<k>.md, one job-summary part per file"
+    value: ${{ steps.run.outputs.summary-dir }}
+  summary-parts:
+    description: "Number of summary parts (1 to 5)"
+    value: ${{ steps.run.outputs.summary-parts }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run okf-check
+      id: run
+      shell: bash
+      env:
+        OKF_ENGINE: ${{ inputs.engine }}
+        OKF_VERSION_LINE: ${{ inputs.version-line }}
+        OKF_PINNED_SHA256: ${{ inputs.pinned-sha256 }}
+        OKF_BUNDLE_PATH: ${{ inputs.bundle-path }}
+        OKF_BASE_SHA: ${{ inputs.base-sha }}
+        OKF_HEAD_SHA: ${{ inputs.head-sha }}
+        OKF_PR_NUMBER: ${{ inputs.pr-number }}
+        OKF_AUTHOR_LOGIN: ${{ inputs.author-login }}
+        OKF_AUTHOR_TYPE: ${{ inputs.author-type }}
+        OKF_DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        OKF_OUT_DIR: ${{ inputs.out-dir }}
+      run: bash "$GITHUB_ACTION_PATH/run-check.sh"

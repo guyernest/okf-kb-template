@@ -1,0 +1,68 @@
+# Phase 212 (KPRV-01, KPRV-03, D-06): stage 2 of the okf-check sticky PR comment.
+#
+# Stage 1 (okf-check.yml, a `pull_request` run with no secrets) runs the engine and uploads the
+# `okf-preview` artifact: comment.md plus pr.json. This workflow fires when that run completes,
+# reads the artifact AS DATA, proves it belongs to exactly one open PR from GitHub's own records,
+# re-validates the comment text and upserts the one sticky comment (.github/okf/post-comment.mjs).
+#
+# Why this is safe:
+#   - `workflow_run` always executes the workflow file and the checkout of the DEFAULT branch, so a
+#     fork PR cannot change what runs here. The checkout below names no ref and no repository, and
+#     nothing from the PR is ever checked out or executed.
+#   - The artifact comes from the PR's own workflow run, so for a fork it is attacker-controlled.
+#     The poster treats every field as a claim to verify and posts a fixed notice if the text fails
+#     its allow-list.
+#   - A failure here never changes the stage-1 check: both fallible steps are best-effort and the
+#     script exits 0. This job is never a required check.
+#
+# Like every `workflow_run` workflow it only fires once this file exists on the default branch.
+name: okf-preview-comment
+
+on:
+  workflow_run:
+    workflows: [okf-check]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: okf-preview-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  okf-preview-comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the poster from the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/okf
+
+      - name: Download the stage-1 preview artifact
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: okf-preview
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/okf-preview
+
+      - name: Post or update the sticky comment
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OKF_ARTIFACT_DIR: ${{ runner.temp }}/okf-preview
+          OKF_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          OKF_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          OKF_RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          OKF_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          OKF_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          OKF_RUN_PR_NUMBERS: ${{ toJSON(github.event.workflow_run.pull_requests.*.number) }}
+        run: node .github/okf/post-comment.mjs

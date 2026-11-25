@@ -1,0 +1,19 @@
+# Phase 212 (D-04, D-10): code-owner review on the check, the engine pin and the trust list.
+#
+# These paths define what the PR check runs (/.github/), which engine it trusts (the pin
+# .okf/engine.lock) and who may approve a trusted-review sign-off (.okf/maintainers), all under
+# /.okf/. A change to any of them needs a code owner's review.
+#
+# Set up once: replace the owner token @OKF_MAINTAINERS with this repository's maintainer team
+# or user, then turn on "Require review from Code Owners" in the branch ruleset for the default
+# branch (see the CI runbook). Until both are done this file protects nothing.
+#
+# Phase 219: .okf/publish.toml (the publish target and the minimum engine) is under /.okf/ too,
+# so retargeting a publish needs a code owner's review.
+/.github/ @OKF_MAINTAINERS
+/.okf/ @OKF_MAINTAINERS
+#
+# Phase 214 (D-07, D-09): the rules skill grants nothing, but it steers the agent, and the scripts change
+# repository settings (bootstrap, doctor, seeding). A change to either needs a code owner's review.
+/.claude/ @OKF_MAINTAINERS
+/scripts/ @OKF_MAINTAINERS
