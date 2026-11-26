@@ -83,6 +83,8 @@ ALLOWED_HOSTS = (
     "user-images.githubusercontent.com",
     "private-user-images.githubusercontent.com",
     "objects.githubusercontent.com",
+    # An editor-attached image on github.com/user-attachments redirects here (A8): one exact host, never a wildcard over amazonaws.com.
+    "github-production-user-asset-6210df.s3.amazonaws.com",
 )
 GITHUB_ATTACHMENT_PATH = "/user-attachments/"
 MAX_REDIRECTS = 3

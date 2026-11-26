@@ -48,20 +48,8 @@
 #     secret, no environment and no OIDC token.
 #   - The trigger label is removed in every outcome, so a maintainer re-triggers by adding it again.
 #
-# Live status (template v0.1.2; ledger: 214-LIVE-PROOF.md in the source repository, section "Plan 214-14"):
-#   - Observed live, on a private repository with template v0.1.0 (okf-agent-probe, run 45714939436): in the model
-#     session every forbidden boundary attempt of the probe (1 to 12, rows C2-C6) was denied, errored or absent and the
-#     one allowed call ran. That run's probe job still FAILED, so the boundary is not proven as a whole.
-#   - Found live and fixed in v0.1.2: claude-code-action configures git itself before the model starts (git user,
-#     and an origin URL that carries the job token), so v0.1.0's byte-exact comparison of .git/config ended EVERY run
-#     `contained:workspace-tampered`, whatever the model did. contain.sh now ignores exactly those writes and nothing
-#     else (its header lists them, with the action's source); any other change under .git still contains the run.
-#     v0.1.1's first form of that tolerance still failed live: a real runner's job token is `ghs_` plus about 370
-#     letters, digits, `_`, `-` and `.`, and the tolerance only allowed letters, digits and `_` in it.
-#     Because that URL holds the token, the deny list also gained `Read(./.git/**)`.
-#   - NOT yet proven live: a full agent run end to end, the pull request it opens, the probe job as a whole (row C0),
-#     the tool-set check (C1), both caps (C7, C8), the new `.git` read deny, and the action's restore of .git/config
-#     after the session (the last two are read from the action's source, not observed).
+# Live status: see CI.md section 9 and 214-LIVE-PROOF.md in the source repository. Observed on template v0.1.2; v0.1.3 adds
+# only one attachment host. Not proven live: the probe session's tool list and the `Read(./.git/**)` deny.
 #
 # The concurrency group includes the label name, so an unrelated label event on the same issue (for
 # example `okf:triaged`) never evicts a queued agent run, and a queued run is never cancelled.
