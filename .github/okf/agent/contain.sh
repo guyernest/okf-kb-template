@@ -30,7 +30,10 @@
 # (its credential-helper branch needs the inputs `allowed_bots` / `allowed_non_write_users`, which neither workflow can set: lint L20 and L25 hold the action's `with:` keys to exactly four). The
 # comparison of .git/config therefore ignores exactly these and nothing else: a `[user]` section whose body is exactly
 # the two lines above, and, in `[remote "origin"]`, a `url` line of exactly the token form above (compared as the
-# plain `https://github.com/<owner>/<repo>` it was before). Every other byte of the file, its mode, and every other
+# plain `https://github.com/<owner>/<repo>` it was before). The token's alphabet is letters, digits, `_`, `-` and `.`:
+# a real runner's job token is `ghs_` plus about 370 such characters with dots and hyphens in it (plan 214-14, the
+# diagnostic run of 2026-11-26; the first form of this tolerance allowed letters, digits and `_` only, so the URL was
+# never taken out of the comparison and every run on a real runner was contained). Every other byte of the file, its mode, and every other
 # file under .git/ must stay identical; a different key, host, userinfo, port, scheme, owner or repository, a second
 # url, an extra remote, `core.fsmonitor`, `core.hooksPath`, `alias.*`, `include*`, `credential.*` all differ.
 # The action also writes `core.fsmonitor` (and, for untrusted pull requests, `core.hooksPath`) into .git/config for the
@@ -108,8 +111,8 @@ config_normalised() {
             for (i = 1; i <= user_n; i++) print user_body[i]
         }
         function origin_url(value) {
-            if (value ~ /^https:\/\/x-access-token:[A-Za-z0-9_]+@github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.git$/) {
-                sub(/^https:\/\/x-access-token:[A-Za-z0-9_]+@/, "https://", value)
+            if (value ~ /^https:\/\/x-access-token:[A-Za-z0-9_.-]+@github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.git$/) {
+                sub(/^https:\/\/x-access-token:[A-Za-z0-9_.-]+@/, "https://", value)
                 sub(/\.git$/, "", value)
             }
             return value
