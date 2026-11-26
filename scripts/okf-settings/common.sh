@@ -23,6 +23,9 @@
 #   okf_ruleset_repair_body <live> <out>
 #                                      the merge-only repair: raises each field below the floor and
 #                                      keeps every stronger live setting
+#   okf_fork_private_off <file>        a private repository's fork policy runs no fork workflow at all
+#   okf_fork_private_reasons <file>    why a private repository's fork policy is below the floor
+#                                      (empty when it holds, or when fork workflows are off)
 #
 # Data files next to this one: ruleset.json (the floor and the create body), environments.tsv
 # (environment and its secret names), labels.tsv, codeowners.py (last-match CODEOWNERS evaluation).
@@ -421,6 +424,29 @@ okf_policy_reasons() {
 # okf_policy_extras <entries-json-file>: id <TAB> type for each policy that is not the default branch.
 okf_policy_extras() {
     jq -r --arg b "$OKF_DEFAULT_BRANCH" '.[] | select((.name == $b and .type == "branch") | not) | "\(.id)\t\(.type // "unknown")"' "$1"
+}
+
+# okf_fork_private_off <private-fork-policy-json-file>: 0 when the policy reads
+# run_workflows_from_fork_pull_requests == false exactly, so no fork pull request runs any workflow. That
+# is STRICTER than the floor (no fork workflow can receive a write token, a secret or a variable because
+# none runs), and an organisation policy can force it: GitHub then answers "Policy is forbidden by entity
+# owner" to every write that turns fork workflows on. A missing or non-boolean value is NOT off.
+okf_fork_private_off() {
+    jq -e '.run_workflows_from_fork_pull_requests == false' "$1" >/dev/null 2>&1
+}
+
+# okf_fork_private_reasons <private-fork-policy-json-file>: why the policy is below the floor, one reason
+# per line; empty when it holds. Fork workflows off (okf_fork_private_off) satisfies the floor outright.
+# With them on (or the flag unreadable) the floor is: approval required, no write token and no secrets or
+# variables sent to fork workflows.
+okf_fork_private_reasons() {
+    okf_fork_private_off "$1" && return 0
+    jq -r '
+      (if .run_workflows_from_fork_pull_requests != true then "fork pull requests do not run workflows" else empty end),
+      (if .send_write_tokens_to_workflows != false then "write tokens are sent to fork workflows" else empty end),
+      (if .send_secrets_and_variables != false then "secrets and variables are sent to fork workflows" else empty end),
+      (if .require_approval_for_fork_pr_workflows != true then "fork workflows run without approval" else empty end)
+    ' "$1" 2>/dev/null || printf '?the fork pull request settings could not be read\n'
 }
 
 # okf_tsv_check: the data files must hold only well-formed rows (a malformed row is an internal error).

@@ -1,4 +1,4 @@
-# okf-check engine pin — copy to .okf/engine.lock; changes need a code-owner review
+# okf-check engine pin (shipped with template okf-kb-template-v0.1.1) — copy to .okf/engine.lock; changes need a code-owner review
 version=0.3.0
 release_repo=guyernest/okf-check
 x86_64.archive_sha256=4055affee417ee582a179e564781aab73dca0ca9ec72d7e6957e7991363fa6ca

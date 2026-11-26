@@ -20,7 +20,8 @@
 #   to the GitHub Actions integration, code-owner review, one approval, last-push approval, stale-review
 #   dismissal, no force push, no deletion, no bypass), the environments okf-engine-seed, publish, agent
 #   and okf-maintenance each limited to the default branch, the Actions settings (default workflow token
-#   read, Actions may not approve pull requests, fork pull request approval), the six D-16 labels and the
+#   read, Actions may not approve pull requests, fork pull request approval; a private repository whose fork
+#   workflows are already OFF is compliant and is not written), the six D-16 labels and the
 #   repository variables OKF_AGENT_BOT_LOGIN and OKF_MAINTENANCE_ENABLED=true.
 #
 # It NEVER writes a secret: it lists, per environment, the secret NAMES still missing together with the
@@ -255,6 +256,9 @@ actions_step() {
 }
 
 # fork_step: fork pull request approval (the public endpoint, or the private one for a private repository).
+# A private repository whose fork policy already reads run_workflows_from_fork_pull_requests=false is
+# compliant and never written: the organisation may forbid the write, and it is stricter than the floor.
+# A refused write while fork workflows are on and below the floor stays a reported request-error.
 fork_step() {
     local f="$OKF_TMP/fork.json"
     if [ "$OKF_PRIVATE" = true ]; then
@@ -262,7 +266,9 @@ fork_step() {
             b_unreadable actions.fork-approval
             return 0
         fi
-        if jq -e '.run_workflows_from_fork_pull_requests == true and .send_write_tokens_to_workflows == false and .send_secrets_and_variables == false and .require_approval_for_fork_pr_workflows == true' "$f" >/dev/null 2>&1; then
+        # Fork workflows OFF (often an organisation policy) is stricter than the floor: ok, no write.
+        # Otherwise the floor is approval required, no write token, no secrets or variables.
+        if [ -z "$(okf_fork_private_reasons "$f")" ]; then
             b_ok actions.fork-approval
         else
             apply actions.fork-approval "run fork workflows with no write token and no secrets, after approval" \

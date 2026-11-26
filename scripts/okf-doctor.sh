@@ -15,6 +15,9 @@
 #   cannot-read <item>: <reason>     the setting could not be read (a 403 names the GitHub App
 #                                    permission the read needs; a 404 on a settings endpoint is never
 #                                    read as "all good")
+#   note <item>: <text>              context for an ok item (only actions.fork-approval on a private
+#                                    repository whose fork pull requests run no workflows: stricter than
+#                                    the floor, so ok); never counted, never a drift
 # The last line is `okf-doctor: <N> drift, <M> ok`, where N counts every item that is not ok (drift and
 # cannot-read alike). Only secret NAMES are ever listed, never a value.
 #
@@ -117,13 +120,11 @@ actions_items() {
     fi
     if [ "$OKF_PRIVATE" = true ]; then
         if okf_api_get actions.fork-approval "repos/$OKF_REPO/actions/permissions/fork-pr-workflows-private-repos" "$fork"; then
-            reasons="$(jq -r '
-              (if .run_workflows_from_fork_pull_requests != true then "fork pull requests do not run workflows" else empty end),
-              (if .send_write_tokens_to_workflows != false then "write tokens are sent to fork workflows" else empty end),
-              (if .send_secrets_and_variables != false then "secrets and variables are sent to fork workflows" else empty end),
-              (if .require_approval_for_fork_pr_workflows != true then "fork workflows run without approval" else empty end)
-            ' "$fork" 2>/dev/null | okf_join_lines)"
+            reasons="$(okf_fork_private_reasons "$fork" | okf_join_lines)"
             report_reasons actions.fork-approval "$reasons"
+            if [ -z "$reasons" ] && okf_fork_private_off "$fork"; then
+                printf 'note actions.fork-approval: fork pull requests run no workflows at all, which is stricter than the floor (a fork pull request gets no okf-check run; push its branch to this repository to get one)\n'
+            fi
         else
             okf_report cannot-read actions.fork-approval "$OKF_GET_REASON"
         fi

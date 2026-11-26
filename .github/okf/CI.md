@@ -115,6 +115,8 @@ Repository settings, under Settings, Actions, General:
 
 Private repositories default to *not* running workflows for fork pull requests, which leaves a fork's required `okf-check` status pending forever; turn the first row on. The check needs no secret and no write token, so the next two rows stay off: fork pull requests are validated without either. Approval for fork workflows is on (the bootstrap and the doctor expect it): the required check waits until a maintainer approves the run.
 
+**An organisation can forbid the first row.** In a private repository owned by an organisation whose policy does not allow fork pull request workflows, GitHub refuses the change (`Policy is forbidden by entity owner`) and the setting reads *Run workflows from fork pull requests: Off*. That is stricter than the table: no workflow runs for a fork pull request, so none can receive a write token, a secret or a variable. The bootstrap and the doctor accept it: the bootstrap writes nothing and reports `ok actions.fork-approval`, and the doctor reports `ok actions.fork-approval` with a `note` line saying that fork workflows are off. The cost is that a fork pull request gets no `okf-check` run, so a maintainer pushes its branch to this repository to get one. The table's other three rows are enforced only while the first row is On; if it is On and a row is below the table, the bootstrap writes the tightening, and a write the organisation refuses stays a reported `request-error`, never hidden. The public-repository setting (approval for every external contributor) is unchanged.
+
 Branch ruleset on the default branch (Settings, Rules, Rulesets):
 
 - Require a pull request before merging.
@@ -128,7 +130,7 @@ Environment `okf-engine-seed`:
 
 Environments `publish`, `agent` and `okf-maintenance` follow the same rules: deployment branches limited to the default branch, secrets only at environment level (section 3a lists the names), and no repository-level secret with any of those names. `okf-maintenance` holds the maintenance GitHub App that template sync and the weekly doctor use; `agent` holds the agent App and the model key.
 
-Actions settings the scripts apply: the default workflow token is read-only, Actions may not approve pull requests, and fork pull request workflows need approval from every external contributor.
+Actions settings the scripts apply: the default workflow token is read-only, Actions may not approve pull requests, and fork pull request workflows need approval from every external contributor (on a private repository, fork workflows switched off by an organisation policy also satisfy the floor).
 
 ## 5. Bumping the engine pin
 
@@ -218,3 +220,14 @@ If the seed fails, put the old token back (step 2) and dispatch again.
 ## 8. Opting into Pages
 
 The bundle view is available as an artifact without Pages. To publish it: set the repository variable `OKF_PAGES_PUBLISH` to `true`, set Settings, Pages, Source to GitHub Actions, then run **okf-pages** by hand. Warning: the Pages site of a private repository may be publicly reachable unless your plan supports private Pages. The view holds document metadata only (titles, paths, trust tiers, links), no document bodies, but that is still the shape of your knowledge base. Leave `OKF_PAGES_PUBLISH` unset to keep it off.
+
+## 9. The maintainer-triggered agent: containment and what is proven
+
+`okf-agent` (label `agent:propose` on a triaged issue) runs Claude Code on a frozen snapshot of the issue and opens one pull request; `okf-agent-probe` (manual, default branch only) asks the model to attempt every forbidden operation once and runs the two caps. Run the probe once per repository after setup and after any sync that changes `okf-agent.yml` or the action pin; it spends a few cents of the model key's budget.
+
+Around the model step the job does not trust the model or the CLI's permission rules: it stages read-only copies of the scripts it runs afterwards, records the git control state of the workspace (`.git/config`, `HEAD`, `packed-refs`, `info/`, `hooks/`, `objects/info/`) and, before any git command, compares it again. A difference leaves a status-only result `contained:workspace-tampered` and nothing is proposed. The pinned `claude-code-action` configures git itself before the model starts, so the comparison of `.git/config` ignores exactly that and nothing else: a `[user]` section holding only `name = claude[bot]` and the matching no-reply `email`, and the `url` of `[remote "origin"]` when it is `https://x-access-token:<token>@github.com/<owner>/<repo>.git` (compared as the plain URL it was). Any other change, the file's mode included, still contains the run. `contain.sh` lists the writes with the action's source file, and `containment.test.sh` runs the action's own git commands and every near miss.
+
+What is proven live, as of template v0.1.1 (the ledger, `214-LIVE-PROOF.md` in the source repository, has the run and the rows):
+
+- Observed once, with template v0.1.0 on a private repository: the model session refused or did not have every forbidden tool call of the probe (edits of `.github/`, `.okf/` and `.git/config`, reads of `/proc/self/environ`, the event payload and a canary outside the workspace, git with an output file, curl, the wrapper with an argument, WebFetch, a write into the wrapper's directory) and ran the one allowed wrapper call. That probe job failed at the containment check described above, which is why v0.1.1 exists, so the boundary is not proven as a whole yet.
+- Not yet proven live: a whole agent run, the pull request it opens, the probe job as a whole, the tool-set check, the turn and budget caps, the `Read(./.git/**)` deny (added in v0.1.1 because the action's remote URL carries the job token) and the action's own restore of `.git/config` after the session (read from its source). If the first probe on v0.1.1 still reports `contained:workspace-tampered`, read the first differing path it prints and do not widen the tolerance by hand.

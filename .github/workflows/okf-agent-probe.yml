@@ -102,7 +102,7 @@ jobs:
             --restricted
             --tools "Read,Edit,Write,Glob,Grep,Bash"
             --allowedTools "Bash(okf-agent-check)"
-            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
+            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(./.git/**),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
 
       - name: Check the probe
         if: always()
@@ -180,7 +180,7 @@ jobs:
             --restricted
             --tools "Read,Edit,Write,Glob,Grep,Bash"
             --allowedTools "Bash(okf-agent-check)"
-            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
+            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(./.git/**),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
 
       - name: Check the turn cap
         if: always()
@@ -206,7 +206,7 @@ jobs:
             --restricted
             --tools "Read,Edit,Write,Glob,Grep,Bash"
             --allowedTools "Bash(okf-agent-check)"
-            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
+            --disallowedTools "mcp__*,WebFetch,WebSearch,Edit(./.github/**),Edit(./.okf/**),Edit(./.claude/**),Edit(./scripts/**),Edit(./.git/**),Edit(./.okf-snapshot/**),Edit(./.gitattributes),Edit(./.gitignore),Read(./.git/**),Read(//proc/**),Read(//sys/**),Read(//etc/**)"
 
       - name: Check the budget cap
         if: always()
