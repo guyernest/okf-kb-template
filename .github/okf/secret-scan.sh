@@ -248,7 +248,8 @@ list_findings() {
     local label="$1" report="$2" rows rule file line
     [ -f "$report" ] && [ ! -L "$report" ] || return 0
     command -v jq >/dev/null 2>&1 || return 0
-    rows="$(jq -r '.[]? | [(.RuleID // "?" | tostring), (.File // "" | tostring), (.StartLine // 0 | tostring)] | @tsv' "$report" 2>/dev/null)" || return 0
+    # An empty File (the net-diff pass) gets a placeholder here: `read` with a tab IFS collapses an empty field and would shift the line number into the file slot (F-K-1).
+    rows="$(jq -r '.[]? | [(.RuleID // "?" | tostring), (.File // "" | tostring | if . == "" then "(net diff)" else . end), (.StartLine // 0 | tostring)] | @tsv' "$report" 2>/dev/null)" || return 0
     while IFS=$'\t' read -r rule file line; do
         [ -n "$rule$file$line" ] || continue
         [[ $rule =~ $RE_RULE ]] || rule='?'

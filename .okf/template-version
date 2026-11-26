@@ -3,4 +3,4 @@
 # manifest. `tag=unreleased` marks a copy that was not created from an exported template: the sync refuses
 # to run there.
 repo=guyernest/okf-kb-template
-tag=okf-kb-template-v0.1.3
+tag=okf-kb-template-v0.1.4

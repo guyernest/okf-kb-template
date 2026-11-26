@@ -17,7 +17,9 @@
 #                                    read as "all good")
 #   note <item>: <text>              context for an ok item (only actions.fork-approval on a private
 #                                    repository whose fork pull requests run no workflows: stricter than
-#                                    the floor, so ok); never counted, never a drift
+#                                    the floor, so ok; and ruleset.bypass under --variables-from-env, where
+#                                    the read-only token is not given bypass_actors); never counted, never
+#                                    a drift
 # The last line is `okf-doctor: <N> drift, <M> ok`, where N counts every item that is not ok (drift and
 # cannot-read alike). Only secret NAMES are ever listed, never a value.
 #
@@ -77,7 +79,7 @@ report_all() {
 }
 
 ruleset_items() {
-    local list="$OKF_TMP/rulesets.json" live="$OKF_TMP/ruleset-live.json" id item
+    local list="$OKF_TMP/rulesets.json" live="$OKF_TMP/ruleset-live.json" id item reasons
     local -a items=()
     while IFS= read -r item; do items+=("$item"); done < <(okf_ruleset_items)
     if ! okf_api_get ruleset "repos/$OKF_REPO/rulesets" "$list" --paginate; then
@@ -94,7 +96,15 @@ ruleset_items() {
         return 0
     fi
     for item in "${items[@]}"; do
-        report_reasons "$item" "$(okf_ruleset_reasons "$item" "$live")"
+        reasons="$(okf_ruleset_reasons "$item" "$live")"
+        # CI mode: GitHub returns bypass_actors only to a caller that can write the ruleset, and the maintenance
+        # token is read-only by design (D-17), so an absent list is a note here, never a drift that cannot clear.
+        # A list that IS returned is checked as in operator mode.
+        if [ "$VARIABLES_FROM_ENV" = 1 ] && [ "$item" = ruleset.bypass ] && [[ $reasons == '?bypass_actors was not returned'* ]]; then
+            printf 'note ruleset.bypass: bypass actors cannot be read with this read-only token; run scripts/okf-doctor.sh with your own login to check them\n'
+            continue
+        fi
+        report_reasons "$item" "$reasons"
     done
 }
 
